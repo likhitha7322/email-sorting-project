@@ -1,0 +1,71 @@
+# openenv.yaml — Email Sorting OpenEnv v2.0
+
+environment:
+  name: EmailSortingEnv-v2
+  version: "2.0.0"
+  description: >
+    A step-based AI environment where agents classify a stream of 40 realistic
+    emails into spam / urgent / normal, with noise injection, confidence-shaped
+    rewards, and full F1 / confusion-matrix evaluation.
+
+  tags: [nlp, classification, email, openenv, hackathon]
+
+observation_space:
+  type: structured
+  fields:
+    email_id:    { type: integer }
+    email_text:  { type: string }
+    subject:     { type: string,  nullable: true }
+    sender:      { type: string,  nullable: true }
+    difficulty:  { type: string,  enum: [easy, medium, hard] }
+    step_number: { type: integer }
+    total_steps: { type: integer }
+    is_noisy:    { type: boolean, description: "True when noise injection is active" }
+
+action_space:
+  type: discrete
+  labels: [spam, urgent, normal]
+  optional_field:
+    confidence: { type: float, range: [0.0, 1.0] }
+
+reward:
+  range:       [0.0, 1.0]
+  base_values: [0.0, 0.5, 1.0]
+  shaping:
+    confidence_bonus: "±0.1 × confidence (reward correct confidence, penalise overconfidence)"
+  schema:
+    1.0: Exact match
+    0.5: urgent ↔ normal confusion (partial credit)
+    0.0: Any confusion involving spam
+
+episode:
+  max_steps:     40
+  termination:   all emails classified
+  noise_support: true
+
+tasks:
+  total: 40
+  splits:
+    easy:   { count: 12, description: "Unambiguous examples" }
+    medium: { count: 14, description: "Contextual reasoning required" }
+    hard:   { count: 14, description: "Adversarial edge-cases" }
+
+agents:
+  - name: RuleBasedAgent
+    type: keyword-priority
+    avg_score: 0.8250
+    macro_f1:  0.7968
+  - name: WeightedScorerAgent
+    type: weighted-keyword + calibrated confidence
+    avg_score: 0.8572
+    macro_f1:  0.8222
+  - name: EnsembleAgent
+    type: weighted + domain heuristics + meta-rules
+    avg_score: 0.9179
+    macro_f1:  0.8836
+
+evaluation:
+  metrics: [avg_score, accuracy, macro_f1, weighted_f1, per_class, confusion_matrix, noise_delta]
+  report:  HTML (python report.py → report.html)
+
+license: MIT

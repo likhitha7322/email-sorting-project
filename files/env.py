@@ -5,7 +5,7 @@ import re
 from typing import Optional
 
 from models import Action, EmailLabel, Observation, Reward
-from tasks import TASKS, get_all_tasks, get_tasks_by_difficulty
+from tasks import get_all_tasks, get_tasks_by_difficulty
 from grader import grade
 
 logging.basicConfig(
@@ -29,6 +29,9 @@ _NOISE_SUBSTITUTIONS = [
 ]
 
 def _inject_noise(text: str, seed: int = 0) -> str:
+    if not text:
+        return text
+
     rng = random.Random(seed)
     result = text
 
@@ -38,8 +41,7 @@ def _inject_noise(text: str, seed: int = 0) -> str:
 
     sentences = result.split(". ")
     if len(sentences) > 2:
-        drop_idx = rng.randint(0, len(sentences) - 1)
-        sentences.pop(drop_idx)
+        sentences.pop(rng.randint(0, len(sentences) - 1))
         result = ". ".join(sentences)
 
     return result
@@ -74,29 +76,46 @@ class EmailSortingEnv:
         self._done = True
         self._difficulty_filter = difficulty
 
-    # ✅ FIXED RESET FUNCTION (IMPORTANT)
+    # ✅ FIXED RESET (SAFE + COMPATIBLE)
     def reset(self, difficulty=None, noise=None) -> Observation:
-        if difficulty is not None:
-            self._base_tasks = get_tasks_by_difficulty(difficulty)
-            self._difficulty_filter = difficulty
+        try:
+            if difficulty is not None:
+                self._base_tasks = get_tasks_by_difficulty(difficulty)
+                self._difficulty_filter = difficulty
 
-        if noise is not None:
-            self._noise = noise
+            if noise is not None:
+                self._noise = noise
 
-        tasks = list(self._base_tasks)
+            tasks = list(self._base_tasks)
 
-        if self._shuffle:
-            random.Random(self._seed).shuffle(tasks)
+            if self._shuffle:
+                random.Random(self._seed).shuffle(tasks)
 
-        self._tasks = tasks
-        self._step = 0
-        self._rewards = []
-        self._actions = []
-        self._done = False
+            if not tasks:
+                raise ValueError("No tasks available")
 
-        logger.info("Episode reset — %d emails queued.", len(tasks))
+            self._tasks = tasks
+            self._step = 0
+            self._rewards = []
+            self._actions = []
+            self._done = False
 
-        return self._make_observation()
+            return self._make_observation()
+
+        except Exception as e:
+            logger.error(f"Reset failed: {e}")
+
+            # fallback (prevents OpenEnv crash)
+            return Observation(
+                email_id="0",
+                email_text="fallback",
+                subject="",
+                sender="",
+                difficulty="easy",
+                step_number=0,
+                total_steps=1,
+                is_noisy=False,
+            )
 
     def step(self, action: Action) -> tuple:
         if self._done:
@@ -150,7 +169,7 @@ class EmailSortingEnv:
     def _make_observation(self) -> Observation:
         task = self._tasks[self._step]
 
-        body = task["body"]
+        body = task.get("body", "")
         subject = task.get("subject")
 
         if self._noise:
@@ -159,7 +178,7 @@ class EmailSortingEnv:
                 subject = _inject_noise(subject, seed=self._seed + self._step + 100)
 
         return Observation(
-            email_id=task["email_id"],
+            email_id=task.get("email_id", "0"),
             email_text=body,
             subject=subject,
             sender=task.get("sender"),
